@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Handy Stream</title>
+</head>
+<body>
+    <video id="localVideo" autoplay playsinline muted></video>
+
+    <script src="https://cdn.agora.io/sdk/release/AgoraRTM-sdk-1.4.2.js"></script>
+    <script>
+        let APP_ID = "67663bf4528d42709d4e8599bd98b7b5";
+        let token = null;
+        let uid = String(Math.floor(Math.random() * 10000));
+        let client;
+        let channel;
+        let localStream;
+        let peerConnection;
+
+        const servers = {
+            iceServers: [
+                { urls: ["stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] }
+            ]
+        };
+
+        let init = async () => {
+            client = await AgoraRTM.createInstance(APP_ID);
+            await client.login({ uid, token });
+
+            channel = client.createChannel("main");
+            await channel.join();
+
+            channel.on('MemberJoined', handleUserJoined);
+            client.on('MessageFromPeer', handleMessageFromPeer);
+
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            document.getElementById("localVideo").srcObject = localStream;
+        };
+
+        async function handleUserJoined(MemberId) {
+            createPeerConnection(MemberId);
+
+            localStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, localStream);
+            });
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            sendMessageToPeer({ type: "offer", offer }, MemberId);
+        }
+
+        async function handleMessageFromPeer({ text }, MemberId) {
+            const message = JSON.parse(text);
+
+            if (message.type === "offer") {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                sendMessageToPeer({ type: "answer", answer }, MemberId);
+            } else if (message.type === "answer") {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+            } else if (message.type === "candidate") {
+                peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+            }
+        }
+
+        function sendMessageToPeer(message, MemberId) {
+            client.sendMessageToPeer({ text: JSON.stringify(message) }, MemberId.toString());
+        }
+
+        function createPeerConnection(MemberId) {
+            peerConnection = new RTCPeerConnection(servers);
+
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    sendMessageToPeer({ type: "candidate", candidate: event.candidate }, MemberId);
+                }
+            };
+        }
+
+        init();
+    </script>
+</body>
+</html>
